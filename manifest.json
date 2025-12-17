@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Relatório Downloader",
+  "version": "1.0.0",
+  "description": "Download relatórios de atendimentos do sistema Mais Vantagens como CSV",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://sistemas.infornet.com.br/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Relatório Downloader"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
