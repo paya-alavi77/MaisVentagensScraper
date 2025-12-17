@@ -1,7 +1,7 @@
 // popup.js - Supabase Integration Version
 
 // ============================================
-// SUPABASE CONFIGURATION - ADD YOUR CREDENTIALS HERE
+// SUPABASE CONFIGURATION
 // ============================================
 const SUPABASE_URL = 'https://xqlsvhezsjzrfuucpmou.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhxbHN2aGV6c2p6cmZ1dWNwbW91Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU3OTI3NzQsImV4cCI6MjA3MTM2ODc3NH0.XK3JF1Yirf10Qb9vOwZJS_8I6_hKnzHoyH1TgiJIDnQ'; 
@@ -10,8 +10,6 @@ const TABLE_NAME = 'historico_atise';
 
 async function fetchLastDateFromSupabase() {
   try {
-    // UPDATED: Now that column is DATE type, we let the database do the sorting.
-    // We request the single most recent date.
     const response = await fetch(
       `${SUPABASE_URL}/rest/v1/${TABLE_NAME}?select=data&order=data.desc&limit=1`,
       {
@@ -24,7 +22,6 @@ async function fetchLastDateFromSupabase() {
     if (!response.ok) return null;
     const records = await response.json();
     
-    // If records exist, return the first one (which is the max date due to desc order)
     if (records && records.length > 0) {
       return records[0].data; // Returns "YYYY-MM-DD"
     }
@@ -39,27 +36,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   const today = new Date().toISOString().split('T')[0];
   document.getElementById('endDate').value = today;
   
-  // Try to fetch last date from Supabase
   showStatus('Carregando última data...', 'processing');
   const lastDate = await fetchLastDateFromSupabase();
   
   if (lastDate) {
-    // Add one day to last date for startDate (to avoid duplicates)
-    // input is YYYY-MM-DD, Date() parses it correctly as UTC if format is clean
-    // or local if dashes. Best to force simple day addition.
+    // Parse the last date found in DB
     const [y, m, d] = lastDate.split('-').map(Number);
-    const lastDateObj = new Date(y, m - 1, d); // Month is 0-indexed in JS
+    const lastDateObj = new Date(y, m - 1, d); 
     
-    lastDateObj.setDate(lastDateObj.getDate() + 1);
+    // UPDATED: Subtract 1 day to create overlap and ensure no data is missed
+    lastDateObj.setDate(lastDateObj.getDate() - 1);
     
-    const nextDay = lastDateObj.toISOString().split('T')[0];
-    document.getElementById('startDate').value = nextDay;
+    const startDate = lastDateObj.toISOString().split('T')[0];
+    document.getElementById('startDate').value = startDate;
     
-    // Display in Brazilian format for user readability
-    showStatus(`Última data no banco: ${lastDate.split('-').reverse().join('/')}`, 'success');
+    showStatus(`Última data no banco: ${lastDate.split('-').reverse().join('/')}. Iniciando de: ${startDate.split('-').reverse().join('/')}`, 'success');
   } else {
     document.getElementById('startDate').value = today;
-    showStatus('Não foi possível obter última data ou banco vazio.', 'error'); // Changed message slightly
+    showStatus('Não foi possível obter última data ou banco vazio.', 'error');
   }
 });
 
@@ -115,7 +109,8 @@ document.getElementById('updateBtn').addEventListener('click', async () => {
       return;
     }
 
-    // Upsert data to Supabase (data+protocolo is unique)
+    // Upsert data to Supabase
+    // 'resolution=merge-duplicates' REQUIRES a unique constraint on (data, protocolo) in the DB
     showStatus(`Enviando ${result.data.length} registros ao banco...`, 'processing');
     
     const insertResponse = await fetch(
@@ -133,7 +128,7 @@ document.getElementById('updateBtn').addEventListener('click', async () => {
     );
 
     if (insertResponse.ok) {
-      showStatus(`✓ ${result.data.length} registros atualizados com sucesso!`, 'success');
+      showStatus(`✓ Processo concluído! Registros novos/atualizados.`, 'success');
     } else {
       const errorText = await insertResponse.text();
       showStatus(`Erro ao inserir: ${errorText}`, 'error');
@@ -152,7 +147,6 @@ async function scraperFunction(startDateISO, endDateISO) {
       return `${day}/${month}/${year}`;
     }
 
-    // Prepare dates for the website query (Website still expects DD/MM/YYYY)
     const startDateBR = formatDateBR(startDateISO);
     const endDateBR = formatDateBR(endDateISO);
 
@@ -181,7 +175,7 @@ async function scraperFunction(startDateISO, endDateISO) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    // 3. Fix Encoding (ISO-8859-1)
+    // 3. Fix Encoding
     const buffer = await response.arrayBuffer();
     const decoder = new TextDecoder('iso-8859-1'); 
     const xmlText = decoder.decode(buffer);
@@ -205,46 +199,38 @@ async function scraperFunction(startDateISO, endDateISO) {
     }
 
     if (!htmlContent) {
+      // Fallback search
       for (const cmd of cmdTags) {
-        const content = cmd.textContent;
-        if (content && content.includes('<table')) {
-          htmlContent = content;
+        if (cmd.textContent && cmd.textContent.includes('<table')) {
+          htmlContent = cmd.textContent;
           break;
         }
       }
     }
 
-    if (!htmlContent) {
-      throw new Error('Nenhum resultado encontrado na resposta.');
-    }
+    if (!htmlContent) throw new Error('Nenhum resultado encontrado.');
 
-    // 5. Parse HTML Table
+    // 5. Parse HTML
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = htmlContent;
     const table = tempDiv.querySelector('table');
 
-    if (!table) {
-      throw new Error('Tabela não encontrada na resposta.');
-    }
+    if (!table) throw new Error('Tabela não encontrada.');
 
     const rows = table.querySelectorAll('tr');
     const dataRows = [];
 
     for (const row of rows) {
       if (row.querySelector('th')) continue;
-
       const cells = row.querySelectorAll('td');
       if (cells.length < 13) continue;
 
       const getText = (index) => cells[index]?.textContent.trim() || '';
-
-      // The website gives us "DD/MM/YYYY" (e.g. 12/12/2025)
       const rawDate = getText(0);
       
-      // Skip bad rows (headers or summaries)
       if (!rawDate || rawDate.toUpperCase() === 'DATA' || rawDate.toLowerCase().includes('total')) continue;
 
-      // UPDATED: Convert Website Date (DD/MM/YYYY) to Database Date (YYYY-MM-DD)
+      // Convert DD/MM/YYYY to YYYY-MM-DD
       let finalDate = rawDate;
       if (rawDate.includes('/')) {
         const [d, m, y] = rawDate.split('/');
@@ -253,7 +239,6 @@ async function scraperFunction(startDateISO, endDateISO) {
 
       const protocolo = getText(1);
       
-      // Aggressive Cleaning for Placa
       let rawPlaca = getText(3);
       let placa = rawPlaca.split(',')[0].replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
       
@@ -265,24 +250,14 @@ async function scraperFunction(startDateISO, endDateISO) {
       const motivo = getText(9);
       const servicos = getText(10);
       
-      let valor = getText(11)
-        .replace('R$', '')
-        .trim()
-        .replace(/\./g, '') 
-        .replace(',', '.'); 
-      
-      let km = getText(12)
-        .replace('KM', '')
-        .trim()
-        .replace(/\./g, '')
-        .replace(',', '.');
+      let valor = getText(11).replace('R$', '').trim().replace(/\./g, '').replace(',', '.'); 
+      let km = getText(12).replace('KM', '').trim().replace(/\./g, '').replace(',', '.');
       
       if (valor === '') valor = '0.00';
       if (km === '') km = '0.00';
 
-      // Build object for Supabase
       dataRows.push({
-        data: finalDate, // Now sending YYYY-MM-DD
+        data: finalDate,
         protocolo,
         placa,
         chassi,
@@ -297,15 +272,9 @@ async function scraperFunction(startDateISO, endDateISO) {
       });
     }
 
-    return { 
-      success: true, 
-      data: dataRows
-    };
+    return { success: true, data: dataRows };
 
   } catch (error) {
-    return { 
-      success: false, 
-      error: error.message 
-    };
+    return { success: false, error: error.message };
   }
 }
