@@ -104,17 +104,16 @@ document.getElementById('updateBtn').addEventListener('click', async () => {
     }
 
     if (result.data.length === 0) {
-      showStatus('Nenhum registro encontrado no período.', 'error');
+      showStatus('Sucesso!', 'success'); // Already up-to-date
       btn.disabled = false;
       return;
     }
 
-    // Upsert data to Supabase
-    // 'resolution=merge-duplicates' REQUIRES a unique constraint on (data, protocolo) in the DB
-    showStatus(`Enviando ${result.data.length} registros ao banco...`, 'processing');
+    // Upsert data to Supabase (data+protocolo is unique)
+    showStatus(`Enviando ${result.data.length} registros...`, 'processing');
     
     const insertResponse = await fetch(
-      `${SUPABASE_URL}/rest/v1/${TABLE_NAME}`,
+      `${SUPABASE_URL}/rest/v1/${TABLE_NAME}?on_conflict=data,protocolo`,
       {
         method: 'POST',
         headers: {
@@ -128,7 +127,7 @@ document.getElementById('updateBtn').addEventListener('click', async () => {
     );
 
     if (insertResponse.ok) {
-      showStatus(`✓ Processo concluído! Registros novos/atualizados.`, 'success');
+      showStatus('Sucesso!', 'success');
     } else {
       const errorText = await insertResponse.text();
       showStatus(`Erro ao inserir: ${errorText}`, 'error');
