@@ -1,2 +1,9 @@
 /.DS_Store
 /atendimentos_2025-12-01_2025-12-16.csv
+.env
+cookies.json
+__pycache__/
+*.pyc
+venv/
+scraper.log
+logs/
