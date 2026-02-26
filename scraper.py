@@ -386,11 +386,35 @@ async def perform_login(headless: bool = True) -> list:
             v2_visible = await page.evaluate(
                 "document.querySelector('.g-recaptchatoken-recaptch-v2')?.style.display !== 'none'"
             )
-            if v2_visible and headless:
-                log.warning('reCAPTCHA v2 triggered — retrying in headful mode...')
-                await browser.close()
-                return await perform_login(headless=False)
+            
+            if v2_visible:
+                # Solve the v2 checkbox
+                log.info('reCAPTCHA v2 detected — attempting to solve...')
+                try:
+                    v2_frame = page.frame_locator('iframe[src*="api2/anchor"]')
+                    await v2_frame.locator('#recaptcha-anchor').click()
+                    log.info('Clicked reCAPTCHA v2 checkbox — waiting for token...')
 
+                    # Wait for the v2 token to be set (callback fires)
+                    await page.wait_for_function(
+                        "document.getElementById('token-recaptch-v2')?.value?.length > 0",
+                        timeout=15000,
+                    )
+                    log.info('reCAPTCHA v2 token received — re-submitting login...')
+
+                    # Re-click the login button now that we have a v2 token
+                    await page.click('button.btn-logon')
+
+                    try:
+                        await page.wait_for_url(re.compile(r'home\.php'), timeout=20000)
+                        login_ok = True
+                        log.info('Login successful after v2 solve — redirected to home.php')
+                    except Exception:
+                        log.info('No redirect after v2 solve, verifying session...')
+                except Exception as e:
+                    log.warning('Failed to solve reCAPTCHA v2: %s', e)
+
+        if not login_ok:
             # Try accessing the report page directly to verify the session
             await page.goto(REPORT_URL, wait_until='networkidle', timeout=15000)
             page_text = await page.content()
@@ -538,20 +562,11 @@ async def run():
     # 3. Login if needed and retry
     if not cookies or result is None:
         log.info('Performing fresh login...')
-        cookies = await perform_login(headless=True)
+        cookies = await perform_login(headless=False)
         save_cookies(cookies)
 
         session = cookies_to_session(cookies)
         result = scrape_report(session, start_date, end_date)
-
-        # If still failing after fresh login, try headful as last resort
-        if result['session_expired'] or not result['success']:
-            log.warning('Headless login did not yield valid session. Trying headful...')
-            cookies = await perform_login(headless=False)
-            save_cookies(cookies)
-
-            session = cookies_to_session(cookies)
-            result = scrape_report(session, start_date, end_date)
 
     # 4. Final result check
     if not result['success']:
