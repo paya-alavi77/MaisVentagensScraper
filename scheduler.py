@@ -21,7 +21,10 @@ logging.basicConfig(
 
 def job():
     log.info('Scheduler triggered — starting scraper run')
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    except Exception as e:
+        log.error('Scraper run failed with exception: %s', e, exc_info=True)
 
 
 schedule.every().day.at('01:00').do(job)
